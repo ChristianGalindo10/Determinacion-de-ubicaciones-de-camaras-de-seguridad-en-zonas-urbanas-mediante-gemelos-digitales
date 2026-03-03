@@ -1,0 +1,25 @@
+version "2023.1"
+
+attr x = 0.5
+attr y = 5
+attr z = 7
+
+@StartRule
+TrafficLightPoint -->
+    # Inserta el modelo 3D del semáforo.
+    # Asegúrate de que la ruta y el nombre del archivo .glb sean correctos.
+    # Ejemplo: assets/TrafficLights/Traffic_Light.glb
+    s(x, y, z)
+    i("assets/TrafficLights/Traffic_Light_2.glb")
+
+    # Opcional: Ajustar la rotación si el modelo no está orientado correctamente
+    # rotate(0, 90, 0) # Rota 90 grados alrededor del eje Y si mira a la dirección equivocada
+    # t(0, 0, 0)      # Puedes ajustar la posición si el pivot point no está en el suelo
+
+    # Opcional: Si quieres un modelo aleatorio de tu colección:
+    # attr trafficLightChoice = rand(1, 5) # Genera un número del 1 al 4 para elegir
+    # case trafficLightChoice == 1 : i("assets/TrafficLights/Traffic_Light_1.glb")
+    # case trafficLightChoice == 2 : i("assets/TrafficLights/Traffic_Light_2.glb")
+    # case trafficLightChoice == 3 : i("assets/TrafficLights/Traffic_Light_3.glb")
+    # case trafficLightChoice == 4 : i("assets/TrafficLights/Traffic_Light_4.glb")
+    # else : i("assets/TrafficLights/Traffic_Light.glb") # Por si no se elige ninguno de los anteriores

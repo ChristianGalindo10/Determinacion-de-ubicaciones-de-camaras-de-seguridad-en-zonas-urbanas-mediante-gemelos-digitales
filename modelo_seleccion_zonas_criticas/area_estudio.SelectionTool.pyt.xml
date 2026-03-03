@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<metadata xml:lang="es">
+	<Esri>
+		<CreaDate>20251115</CreaDate>
+		<CreaTime>10040900</CreaTime>
+		<ArcGISFormat>1.0</ArcGISFormat>
+		<SyncOnce>TRUE</SyncOnce>
+		<ModDate>20251115</ModDate>
+		<ModTime>10262200</ModTime>
+		<scaleRange>
+			<minScale>150000000</minScale>
+			<maxScale>5000</maxScale>
+		</scaleRange>
+		<ArcGISProfile>ItemDescription</ArcGISProfile>
+	</Esri>
+	<tool name="SelectionTool" displayname="Selection Tool" toolboxalias="toolbox" xmlns="">
+		<arcToolboxHelpPath>c:\program files\arcgis\pro\Resources\Help\gp</arcToolboxHelpPath>
+		<parameters>
+			<param name="in_huella_urbana_featurelayer" displayname="Capa Huella urbana" type="Required" direction="Input" datatype="Feature Layer" expression="in_huella_urbana_featurelayer">
+				<dialogReference>
+                    &lt;DIV
+                    STYLE="text-align:Left;"&gt;&lt;DIV&gt;&lt;P&gt;&lt;SPAN&gt;HOLALALAAA&lt;/SPAN&gt;&lt;/P&gt;&lt;/DIV&gt;&lt;/DIV&gt;</dialogReference>
+			</param>
+			<param name="in_grilla_dane_featurelayer" displayname="Capa Grilla Dane" type="Required" direction="Input" datatype="Feature Layer" expression="in_grilla_dane_featurelayer"/>
+			<param name="in_catastral_featurelayer" displayname="Capa Catastral" type="Required" direction="Input" datatype="Feature Layer" expression="in_catastral_featurelayer"/>
+			<param name="out_bins_featurelayer" displayname="Salida bins" type="Required" direction="Output" datatype="Feature Layer" expression="out_bins_featurelayer"/>
+		</parameters>
+	</tool>
+	<dataIdInfo>
+		<idCitation>
+			<resTitle>Selection Tool</resTitle>
+		</idCitation>
+		<searchKeys>
+			<keyword>Scripting</keyword>
+		</searchKeys>
+	</dataIdInfo>
+	<distInfo>
+		<distributor>
+			<distorFormat>
+				<formatName>ArcToolbox Tool</formatName>
+			</distorFormat>
+		</distributor>
+	</distInfo>
+	<mdHrLv>
+		<ScopeCd value="005"/>
+	</mdHrLv>
+	<mdDateSt Sync="TRUE">20251115</mdDateSt>
+</metadata>
