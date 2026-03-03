@@ -1,0 +1,839 @@
+/**
+ * File:    Building_From_Footprint.cga
+ * Created: 20 Mar 2011 16:42:13 GMT
+ * Author:  Esri R&D Center Zurich
+ */
+ 
+
+@Hidden(Usage,BuildingHeight,UpperfloorHeight)
+import Facade_Textures:"/ESRI.lib/rules/Facades/Facade_Textures.cga" (BuildingHeight=Extrude_Ht,UpperfloorHeight=Floor_Ht*unitScale,Usage=Usage)
+@Hidden(Usage,UpperfloorHeight)
+import Facade_Schematic:"/ESRI.lib/rules/Facades/Facade_Schematic.cga" (UpperfloorHeight=Floor_Ht*unitScale,Usage=Usage)
+import Roof_Textures:"/ESRI.lib/rules/Roofs/Roof_Textures.cga"
+
+
+
+###################################
+# Attributes
+#
+
+attr CONNPISOS = 1
+
+@Group("Building Settings",1) 
+
+@Order(1) @Range(min=1, max=400, restricted=false) @Distance @Description("Distance from ground to bottom of roof") 
+attr Eave_Ht 		= 0
+@Order(2) @Range(min=1, max=400, restricted=false) @Distance @Description("Distance from ground to top of roof") 
+attr Ridge_Ht 		= 0
+@Order(3) @Enum(valuesAttr=Usage_Values)
+attr Usage 			= "Residential"
+@Order(4) @Enum(valuesAttr=Building_Form_Values)
+attr Building_Form 	= _getInitialBuildingForm
+@Order(5) @Enum(valuesAttr=Roof_Form_Values)
+attr Roof_Form 		= "flat"
+@Order(6) @Enum(valuesAttr=Roof_Orientation_Values) @Description("Ridge is along/across longest length of building, or use Roof_Direction")
+attr Roof_Orientation = "along"
+@Order(7) @Range(min=0, max=360, restricted=true) @Angle @Description("Ignored unless Roof_Orientation = \"use Roof_Direction\"")
+attr Roof_Direction = 0
+@Order(8) @Range(min=2.9, max=5.2, restricted=false) @Distance @Description("in Meters")
+attr Floor_Ht 		= 3.7
+@Order(9) @Range(min=0, max=40, restricted=false) @Distance @Description("Distance from ground to lowest depth of underground part")
+attr Underground_Ht = 0
+@Order(10) @Range(min=0, max=400, restricted=false) @Distance @Description("Distance from ground to bottom of building part (non-zero in case of parts elevated above ground level)")
+attr Min_Ht 		= 0
+
+@Hidden
+attr BuildingColor	= "#ffffff"
+@Hidden
+attr Roof_Ht 		= _getRoofHeight
+@Hidden
+attr Extrude_Ht 	= _getExtrudeHeight
+
+
+@Group("Visualization Options",2) 
+
+@Order(1) @Enum(valuesAttr=Representation_Values)
+attr Representation = "realistic with facade textures"
+@Order(2) @Range(min=0, max=1)
+attr Transparency 	= 0
+@Order(3) @Color
+attr OverwriteColor = _getOverwriteColor
+@Order(4) @Color
+attr RoofColor 		= OverwriteColor
+@Order(5) @Range(min=0, max=1)
+attr CleanupTolerance = _getCleanupTolerance
+
+
+@Group("Rule Options",3) 
+
+@Order(2) @Enum("Meters","Feet") @Description("Units of height attributes") 
+attr Unit 			= "Meters"
+@Order(3) @Enum("None","All") @Description("Report information")
+attr Reporting 		= "None"
+
+
+@Hidden
+attr Usage_Values = ["Random","Agricultural","Assembly","Educational","Industry","Mercantile","Office","Other","Public","Residential","Service","Transport","Unknown","Utility"]
+@Hidden
+attr Building_Form_Values = ["extrusion","setback top","setback facade","setback base","setback everywhere","cylinder","sphere","cone","pyramid","dome"]
+@Hidden
+attr Roof_Form_Values = ["flat","shed","pyramid","gable","hip","half-hip","gablet","gambrel","mansard","gambrel-flat","mansard-flat","vault","dome","saltbox","butterfly","onion","sawtooth","gable-row","cross-gable"]
+@Hidden
+attr Roof_Orientation_Values = ["along", "across", "use Roof_Direction"]
+@Hidden
+attr Representation_Values = ["realistic with facade textures","schematic facades","solid color","white"]
+
+
+###################################
+# Consts
+#
+
+# user-driven constants
+const unitScale = case Unit=="Feet": 1/0.3048006096012192 else: 1
+
+# for curved roofs such as dome or vault
+const curvedAngleResolution = 10
+
+# for sawtooth and gable row roofs
+const minSawtoothIncline = 20
+
+
+###################################
+# Functions
+#
+
+_getInitialBuildingForm =
+	case Eave_Ht*unitScale < 50 : "extrusion"
+	case Eave_Ht*unitScale > 100: "setback everywhere"
+	else                        : 5%:"extrusion" 15%:"setback top" 15%:"setback facade" 15%:"setback base" else:"setback everywhere"
+
+_getInitialUsage =
+	case Eave_Ht>30: "Random" else: 80%:"Residential" else:"Random"
+
+_getInitialEaveHeight
+	with(
+		area := geometry.area
+	) =
+	case area < 100 : area/rand(5,10)
+	case area < 1000: area/rand(15,25)
+	case area < 7000: area/rand(10,25)
+	else            : area/rand(70,200)
+
+_getInitialRidgeHeight =
+	case Eave_Ht<30: Eave_Ht+rand(3,6) else: Eave_Ht
+
+_getInitialRoofForm =
+	case Ridge_Ht < Eave_Ht+1: "flat"
+	else: 40%: "hip" 50%: "gable" else: "gambrel"
+
+_getRoofHeight = max(Ridge_Ht - Eave_Ht, 0) * unitScale
+
+_getExtrudeHeight = CONNPISOS * Floor_Ht
+
+_getOverwriteColor =
+	case Representation == "realistic with facade textures": "#ffffff"
+	else: BuildingColor
+		
+_getCleanupTolerance =
+	case Representation == "solid color" || Representation == "white": 0
+	else: 1
+
+# for curved roofs such as dome or vault
+calcSegmentHt(n) = Roof_Ht * (cos((n-1)*curvedAngleResolution) - cos(n*curvedAngleResolution))
+
+# test if shape is approximately rectangular
+const rectThres = 0.8	# must be > pi*0.5*0.5, since that's a circle in a square
+isApproxRectangular = geometry.area/(scope.sx*scope.sz) > rectThres  # xz scope must be aligned to minimum area bounding box
+
+getScopeX = convert(scope, world, pos, [1,0,0]) .- convert(scope, world, pos, [0,0,0])
+getScopeZ = convert(scope, world, pos, [0,0,1]) .- convert(scope, world, pos, [0,0,0])
+
+# find edge with normal closest to vector +/- v (in xz plane in world)
+findClosestEdgeNormalToVector(v, check180)
+	with(
+		theta := (atan2(v[0],-v[2]) + 360) % 360	# north = [0,0,-1], theta is angle from north in [0,360]
+	) =
+	findClosestEdgeNormalToAngle(theta, check180)
+
+# find edge with normal closest to angle a (in xz plane)
+# returning edgeInd>=geometry.nEdges means match with a+180
+findClosestEdgeNormalToAngle(a, check180)
+	with(
+		edgeAngles := getEdgeAngles
+	) =
+	case check180:
+		findMin([calcAngleDiffs(edgeAngles, a),
+				 calcAngleDiffs(edgeAngles, (a+180)%360)])
+	else:
+		findMin(calcAngleDiffs(edgeAngles, a))
+
+getEdgeAngles = comp(fe) { all: geometry.angle(azimuth) }
+calcAngleDiffs(a, b) = abs((abs(a.-b).+180).%360 .- 180)
+findMin(array) = sortIndices(array[0:size(array)-1])[0]
+
+
+###################################
+###################################
+#
+# RULES
+#
+###################################
+###################################
+
+@StartRule
+Generate -->
+	cleanupGeometry(all, CleanupTolerance)
+	alignScopeToAxes(y) s('1,0,'1)		# make it horizontal i.e. scale it flat
+	alignScopeToGeometry(yUp, 0, longest)
+	set(Eave_Ht,Eave_Ht*unitScale)
+	set(Floor_Ht,Floor_Ht*unitScale)
+	set(Extrude_Ht,Extrude_Ht*unitScale)
+	Reports_Lot
+	set(material.opacity,1-Transparency)
+	Footprint
+
+Generate(myEaveHeight, myRidgeHeight, myBuildingForm, myRoofForm, myRoofOrientation, myRoofDirection, myFloorHeight, myUndergroundHeight, myMinHeight, myBuildingColor, myRoofColor) -->
+	// set attrs to desired values
+	set(Eave_Ht, myEaveHeight)
+	set(Ridge_Ht, myRidgeHeight)
+	set(Building_Form, myBuildingForm)
+	set(Roof_Form, myRoofForm)
+	set(Roof_Orientation, myRoofOrientation)
+	set(Roof_Direction, myRoofDirection)
+	set(Floor_Ht, myFloorHeight)
+	set(Underground_Ht, myUndergroundHeight)
+	set(Min_Ht, myMinHeight)
+	set(BuildingColor, myBuildingColor)
+	set(RoofColor, myRoofColor)
+	
+	// recalc attrs (these cannot be used in Inspector)
+	set(Usage, _getInitialUsage)
+	set(OverwriteColor, _getOverwriteColor)
+	
+	// recalc hidden attrs
+	set(Roof_Ht, _getRoofHeight)
+	set(Extrude_Ht, _getExtrudeHeight)
+	
+	Generate
+
+
+###################################
+# Building Mass
+#
+
+Footprint -->
+	AboveGround
+	Underground
+	
+Underground -->
+	case Underground_Ht>0:
+		extrude(-Underground_Ht)
+	else:
+		NIL
+		
+AboveGround -->
+	t(0, Min_Ht, 0)
+	ChooseBuildingForm
+	
+ChooseBuildingForm -->
+	case Building_Form == "cylinder":
+		InsertCylinder
+	case Building_Form == "sphere":
+		InsertSphere
+	case Building_Form == "cone":
+		InsertCone
+	case Building_Form == "pyramid":
+		InsertCone(4)
+	case Building_Form == "dome":
+		InsertDome
+	case scope.sz < 10 || scope.sx < 10:
+		SimpleExtrusion(Extrude_Ht)
+	case Building_Form == "setback top":
+		SetbackTop
+	case Building_Form == "setback facade":
+		SetbackFacade
+	case Building_Form == "setback base":
+		SetbackBase
+	case Building_Form == "setback everywhere":
+		SetbackAll
+	else:
+		SimpleExtrusion(Extrude_Ht)
+
+InsertCylinder -->
+	primitiveCylinder
+	s('1, Extrude_Ht, '1)
+	Mass(true)
+	
+InsertSphere -->
+	primitiveSphere
+	s('1, Extrude_Ht, '1)
+	Facade
+	
+InsertCone --> InsertCone(16)
+
+InsertCone(sides) -->
+	primitiveCone(sides)
+	s('1, Extrude_Ht, '1)
+	comp(f) { bottom: Bottom | all: Facade }
+
+InsertDome -->
+	primitiveSphere
+	s('1, 2*Extrude_Ht, '1)
+	t(0, -Extrude_Ht, 0)
+	split(y) { ~1: NIL
+			 | ~1: comp(f) { bottom: Bottom | all= Facade } }
+
+SetbackTop --> 
+	split(x){ 'rand(0.1,0.3): ExtrusionWithConvexify(Extrude_Ht-rint(rand(3))*Floor_Ht,false,4)
+			| ~1            : ExtrusionWithConvexify(Extrude_Ht,true,6)
+			| 'rand(0.1,0.3): ExtrusionWithConvexify(Extrude_Ht-rint(rand(3))*Floor_Ht,false,4) }
+
+SetbackFacade -->
+	split(z){ 'rand(0.03,0.2): ExtrusionWithConvexify(Extrude_Ht*rand(0.2,0.8),false,2)
+			| ~1  			: ExtrusionWithConvexify(Extrude_Ht,true,6)
+			| 'rand(0.03,0.2): ExtrusionWithConvexify(Extrude_Ht*rand(0.2,0.8),false,2) }
+
+SetbackBase -->
+	[ extrude(3*Floor_Ht) Mass(false) ]
+	t(0,3*Floor_Ht,0)
+	split(x){ 'rand(0.6,0.8): ExtrusionWithConvexify(Extrude_Ht-3*Floor_Ht,true,6) }
+
+SetbackAll -->
+	[ extrude(3*Floor_Ht) Mass(false) ]
+	t(0,3*Floor_Ht,0)
+	set(Extrude_Ht,Extrude_Ht-3*Floor_Ht)
+	split(x){ 'rand(0.6,0.8): 
+		split(z){ '0.2: ExtrusionWithConvexify(Extrude_Ht*rand(0.2,0.8),false,2)
+				| ~1  : SetbackTop
+				| '0.2: ExtrusionWithConvexify(Extrude_Ht*rand(0.2,0.8),false,2) }
+	}
+	
+ExtrusionWithConvexify(height,constructRoof,maxLength) -->
+	convexify(maxLength) 
+	comp(f){ all: alignScopeToGeometry(yUp, 0, longest) ExtrusionConvexified(height,constructRoof,maxLength) }
+	
+ExtrusionConvexified(height,constructRoof,maxLength) -->
+	case scope.sx < maxLength || scope.sz < maxLength: NIL
+	else:
+		Extrusion(height,constructRoof)
+
+SimpleExtrusion(height) -->
+	comp(f) { all: alignScopeToGeometry(yUp, 0, longest) Extrusion(height,true) }
+	
+Extrusion(height,constructRoof) -->
+	Reports_GFA(height)
+	extrude(height) Mass(constructRoof)
+		
+Mass(constructRoof) -->
+	case constructRoof:
+		comp(f) { side: Facade | top: Roof | bottom: Bottom }
+	else:
+		comp(f) { side: Facade | top: RoofPlane | bottom: Bottom }
+
+Bottom -->
+	case Min_Ht>0:	BottomPlane
+	else:			NIL
+		
+
+###################################
+# Roof Generation
+#
+
+Roof -->
+	alignScopeToAxes
+	alignScopeToGeometryBBox(xz)
+	ChooseRoofForm
+
+ChooseRoofForm -->
+	case Roof_Ht == 0				: FlatRoof
+	case Roof_Form == "shed"		: ShedRoof
+	case Roof_Form == "pyramid"		: PyramidRoof
+	case Roof_Form == "gable"		: GableRoof
+	case Roof_Form == "hip"			: HipRoof
+	case Roof_Form == "half-hip"	: HalfHipRoof
+	case Roof_Form == "gablet"		: GabletRoof
+	case Roof_Form == "gambrel"		: GambrelRoof
+	case Roof_Form == "mansard"		: MansardRoof
+	case Roof_Form == "gambrel-flat": GambrelFlatRoof
+	case Roof_Form == "mansard-flat": MansardFlatRoof
+	case Roof_Form == "vault"		: VaultRoof
+	case Roof_Form == "dome"		: DomeRoof
+	case Roof_Form == "saltbox"		: SaltboxRoof
+	case Roof_Form == "butterfly"	: ButterflyRoof
+	case Roof_Form == "onion"		: OnionRoof
+	case Roof_Form == "sawtooth"	: SawtoothRoof
+	case Roof_Form == "gable-row"	: GableRowRoof
+	case Roof_Form == "cross-gable"	: CrossGableRoof
+	else							: FlatRoof
+
+# basic roof types
+	
+ShedRoof -->
+	case Roof_Orientation == "along":
+		ShedRoof(findClosestEdgeNormalToVector(getScopeZ, true))
+	case Roof_Orientation == "across":
+		ShedRoof(findClosestEdgeNormalToVector(getScopeX, true))
+	else:		# use Roof_Direction
+		ShedRoof_RoofDirection
+
+ShedRoof(edgeInd) -->
+	roofShed(byHeight, Roof_Ht, edgeInd)
+	RoofMass(false)
+
+ShedRoof_RoofDirection
+	with (
+		edgeInd := findClosestEdgeNormalToAngle(Roof_Direction, true)
+	) -->
+	case edgeInd < geometry.nEdges:
+		ShedRoof(edgeInd)
+	else:
+		alignScopeToGeometry(yUp, 0, edgeInd)
+		roofShed(-atan2(Roof_Ht,scope.sz), edgeInd)	// shed roof with negative angle creates ridge on edgeInd
+		RoofMass(false)
+	
+GableRoof
+	with(
+		isConcave := geometry.isConcave
+	) -->
+	case geometry.nEdges == 4 && !isConcave:
+		case Roof_Orientation == "along":
+			GableRoof(findClosestEdgeNormalToVector(getScopeX, true))
+		case Roof_Orientation == "across":
+			GableRoof(findClosestEdgeNormalToVector(getScopeZ, true))
+		else:				# use Roof_Direction
+			GableRoof(findClosestEdgeNormalToAngle((Roof_Direction+90)%360, true))
+	case isApproxRectangular || !isConcave:
+		case Roof_Orientation == "along":
+			RidgeRoof
+		case Roof_Orientation == "across":
+			rotateScope(0,-90,0)
+			RidgeRoof
+		else:
+			alignScopeToAxes(world.xyz)			# x aligns to east (90 deg)
+			rotateScope(0,-Roof_Direction,0)	# align x to Roof_Direction+90 (ridge is along Roof_Direction+90)
+			RidgeRoof
+	else:
+		roofGable(byHeight, Roof_Ht)
+		RoofMass(false)
+	
+GableRoof(edgeInd) -->
+	roofGable(45, 0, 0, false, edgeInd)
+	s('1, Roof_Ht, '1)
+	RoofMass(false)
+	
+RidgeRoof -->
+	roofRidge(byHeight, Roof_Ht) RoofMass(false)
+
+HipRoof -->
+	roofHip(byHeight, Roof_Ht) RoofMass(false)
+
+PyramidRoof -->
+	roofPyramid(byHeight, Roof_Ht) RoofMass(false)
+
+# gable & hip combinations
+
+HalfHipRoof
+	with(
+		isConcave := geometry.isConcave
+	) -->
+	case geometry.nEdges == 4 && !isConcave:
+		case Roof_Orientation == "along":
+			HalfHipRoof_AlignToEdge(findClosestEdgeNormalToVector(getScopeX, true))
+		case Roof_Orientation == "across":
+			HalfHipRoof_AlignToEdge(findClosestEdgeNormalToVector(getScopeZ, true))
+		else:				# use Roof_Direction
+			HalfHipRoof_AlignToEdge(findClosestEdgeNormalToAngle((Roof_Direction+90)%360, true))
+	case isApproxRectangular || !isConcave:
+		case Roof_Orientation == "along":
+			HalfHipRoof_RoofRidge
+		case Roof_Orientation == "across":
+			rotateScope(0,-90,0)
+			HalfHipRoof_RoofRidge
+		else:
+			alignScopeToAxes(world.xyz)			# x aligns to east (90 deg)
+			rotateScope(0,-Roof_Direction,0)	# align x to Roof_Direction+90 (ridge is along Roof_Direction+90)
+			HalfHipRoof_RoofRidge
+	else:
+		HalfHipRoof_AlignDefault
+		
+HalfHipRoof_AlignDefault -->
+	roofGable(byHeight, Roof_Ht)
+	HalfHipRoof_TopPart
+	
+HalfHipRoof_AlignToEdge(edgeInd) -->
+	roofGable(45, 0, 0, false, edgeInd)
+	s('1, Roof_Ht, '1)
+	HalfHipRoof_TopPart
+	
+HalfHipRoof_RoofRidge -->
+	roofRidge(byHeight, Roof_Ht)
+	HalfHipRoof_TopPart
+	
+HalfHipRoof_TopPart -->
+	split(y) { '0.5: RoofMass(false)	# can't get rid of horizontal because that might include the angled face
+			 | ~1: comp(f) { bottom= reverseNormals
+			 						 set(Roof_Ht, 0.5*Roof_Ht) HipRoof } }
+
+GabletRoof -->
+	roofHip(byHeight, Roof_Ht)
+	split(y) { '0.5: RoofMass(false)
+					 comp(f) { bottom: NIL
+					 		 | horizontal: alignScopeToAxes
+										   alignScopeToGeometryBBox(xz)
+										   set(Roof_Ht, 0.5*Roof_Ht)
+					 		 			   GableRoof } }
+
+# gable/hip double-pitched
+
+GambrelRoof
+	with(
+		isConcave := geometry.isConcave
+	) -->
+	case geometry.nEdges == 4 && !isConcave:
+		case Roof_Orientation == "along":
+			GambrelRoof_AlignToEdge(findClosestEdgeNormalToVector(getScopeX, true))
+		case Roof_Orientation == "across":
+			GambrelRoof_AlignToEdge(findClosestEdgeNormalToVector(getScopeZ, true))
+		else:				# use Roof_Direction
+			GambrelRoof_AlignToEdge(findClosestEdgeNormalToAngle((Roof_Direction+90)%360, true))
+	case isApproxRectangular || !isConcave:
+		case Roof_Orientation == "along":
+			GambrelRoof_RoofRidge
+		case Roof_Orientation == "across":
+			rotateScope(0,-90,0)
+			GambrelRoof_RoofRidge
+		else:
+			alignScopeToAxes(world.xyz)			# x aligns to east (90 deg)
+			rotateScope(0,-Roof_Direction,0)	# align x to Roof_Direction+90 (ridge is along Roof_Direction+90)
+			GambrelRoof_RoofRidge
+	else:
+		GambrelRoof_AlignDefault
+		
+GambrelRoof_AlignDefault -->
+	roofGable(byAngle, 70)
+	split(y) { 0.7*Roof_Ht: RoofMass(true)
+			 			    comp(f) { bottom: NIL
+								    | horizontal: roofGable(byHeight, 0.3*Roof_Ht) RoofMass(false) } }		
+
+GambrelRoof_AlignToEdge(edgeInd) -->
+	roofGable(70, 0, 0, false, edgeInd)
+	split(y) { 0.7*Roof_Ht: RoofMass(true)
+					 		comp(f) { bottom: NIL
+					 				| horizontal: set(Roof_Ht, 0.3*Roof_Ht)
+					 							  GableRoof(edgeInd) } }
+
+GambrelRoof_RoofRidge -->
+	roofRidge(byAngle, 70)
+	split(y) { 0.7*Roof_Ht: RoofMass(true)
+			 			    comp(f) { bottom: NIL
+								    | horizontal: roofRidge(byHeight, 0.3*Roof_Ht) RoofMass(false) } }
+
+MansardRoof -->
+	roofHip(byAngle, 70)
+	split(y){ Roof_Ht*0.7: RoofMass(true) 
+						   comp(f){ bottom: NIL | horizontal: set(Roof_Ht,Roof_Ht*0.3) HipRoof } }
+
+# gable/hip with flat top
+
+GambrelFlatRoof
+	with(
+		isConcave := geometry.isConcave
+	) -->
+	case geometry.nEdges == 4 && !isConcave:
+		case Roof_Orientation == "along":
+			GambrelFlatRoof_AlignToEdge(findClosestEdgeNormalToVector(getScopeX, true))
+		case Roof_Orientation == "across":
+			GambrelFlatRoof_AlignToEdge(findClosestEdgeNormalToVector(getScopeZ, true))
+		else:				# use Roof_Direction
+			GambrelFlatRoof_AlignToEdge(findClosestEdgeNormalToAngle((Roof_Direction+90)%360, true))
+	case isApproxRectangular || !isConcave:
+		case Roof_Orientation == "along":
+			GambrelFlatRoof_RoofRidge
+		case Roof_Orientation == "across":
+			rotateScope(0,-90,0)
+			GambrelFlatRoof_RoofRidge
+		else:
+			alignScopeToAxes(world.xyz)			# x aligns to east (90 deg)
+			rotateScope(0,-Roof_Direction,0)	# align x to Roof_Direction+90 (ridge is along Roof_Direction+90)
+			GambrelFlatRoof_RoofRidge
+	else:
+		GambrelFlatRoof_AlignDefault
+
+GambrelFlatRoof_AlignDefault -->
+	roofGable(byAngle, 45)
+	split(y) { Roof_Ht: RoofMass(false) }
+
+GambrelFlatRoof_AlignToEdge(edgeInd) -->
+	roofGable(45, 0, 0, false, edgeInd)
+	split(y) { Roof_Ht: RoofMass(false) }
+
+GambrelFlatRoof_RoofRidge -->
+	roofRidge(byAngle, 45)
+	split(y) { Roof_Ht: RoofMass(false) }
+
+MansardFlatRoof -->
+	roofHip(byAngle, 45) 
+	split(y){ Roof_Ht: RoofMass(false) }
+
+# round roofs
+
+VaultRoof
+	with(
+		isConcave := geometry.isConcave
+	) -->
+	case geometry.nEdges == 4 && !isConcave:
+		case Roof_Orientation == "along":
+			VaultRoof_AlignToEdge(findClosestEdgeNormalToVector(getScopeX, true))
+		case Roof_Orientation == "across":
+			VaultRoof_AlignToEdge(findClosestEdgeNormalToVector(getScopeZ, true))
+		else:				# use Roof_Direction
+			VaultRoof_AlignToEdge(findClosestEdgeNormalToAngle((Roof_Direction+90)%360, true))
+	case isApproxRectangular || !isConcave:
+		case Roof_Orientation == "along":
+			VaultRoof_RoofRidge
+		case Roof_Orientation == "across":
+			rotateScope(0,-90,0)
+			VaultRoof_RoofRidge
+		else:
+			alignScopeToAxes(world.xyz)			# x aligns to east (90 deg)
+			rotateScope(0,-Roof_Direction,0)	# align x to Roof_Direction+90 (ridge is along Roof_Direction+90)
+			VaultRoof_RoofRidge
+	else:
+		VaultRoof(90/curvedAngleResolution)
+		
+VaultRoof(n) -->
+	case n > 0:
+		roofGable(byAngle, (n-0.5)*curvedAngleResolution)
+		split(y){ calcSegmentHt(n): RoofMass(n!=1) 
+									comp(f){ bottom: NIL | horizontal: VaultRoof(n-1) } }
+	else:
+		NIL	
+
+# Note: doesn't work with shapes that lose edges <= edgeInd after split (4 sided convex shape where gable side is too small)
+VaultRoof_AlignToEdge(edgeInd) -->
+	VaultRoof_AlignToEdge(edgeInd, 90/curvedAngleResolution)
+
+VaultRoof_AlignToEdge(edgeInd, n) -->
+	case n > 0:
+		roofGable((n-0.5)*curvedAngleResolution, 0, 0, false, edgeInd)
+		split(y){ calcSegmentHt(n): RoofMass(n!=1) 
+									comp(f){ bottom: NIL | horizontal: VaultRoof_AlignToEdge(edgeInd, n-1) } }
+	else:
+		NIL
+
+VaultRoof_RoofRidge -->
+	VaultRoof_RoofRidge(90/curvedAngleResolution)
+	
+VaultRoof_RoofRidge(n) -->
+	case n > 0:
+		roofRidge(byAngle, (n-0.5)*curvedAngleResolution)
+		cleanupGeometry(vertices, 0)	// TO DO: remove after CE-8922 is fixed
+		split(y){ calcSegmentHt(n): RoofMass(n!=1) 
+									comp(f){ bottom: NIL | horizontal: VaultRoof_RoofRidge(n-1) } }
+	else:
+		NIL
+
+DomeRoof -->
+	DomeRoof(90/curvedAngleResolution)
+
+DomeRoof(n) -->
+	case n > 0:
+		roofHip(byAngle, (n-0.5)*curvedAngleResolution)
+		split(y){ (calcSegmentHt(n)): RoofMass(n!=1) 
+									  comp(f){ bottom: NIL | horizontal: DomeRoof(n-1) } }
+	else:
+		NIL
+
+# gable & shed combinations
+
+SaltboxRoof -->
+	case Roof_Orientation == "along":
+		SaltboxRoof(findClosestEdgeNormalToVector(getScopeZ, true))
+	case Roof_Orientation == "across":
+		SaltboxRoof(findClosestEdgeNormalToVector(getScopeX, true))
+	else:		# use Roof_Direction
+		SaltboxRoof(findClosestEdgeNormalToAngle(Roof_Direction, false))
+
+# Note: doesn't work for shapes with holes
+SaltboxRoof(edgeInd) -->
+	roofShed(byHeight, 1.5*Roof_Ht, edgeInd)
+	split(y) { '0.333: RoofMass(false)	# can't get rid of horizontal because that might include the angled face
+			 | ~1: comp(f) { bottom= reverseNormals
+			 						 roofRidge(byHeight, 0.5*Roof_Ht)
+			 						 RoofMass(false) }}
+
+ButterflyRoof -->
+	case Roof_Orientation == "along":
+		ButterflyRoof_Split
+	case Roof_Orientation == "across":
+		rotateScope(0,-90,0)
+		ButterflyRoof_Split
+	else:		# use Roof_Direction
+		alignScopeToAxes(world.xyz)			# x aligns to east (90 deg)
+		rotateScope(0,-Roof_Direction,0)	# align x to Roof_Direction+90 (ridge is along Roof_Direction+90)
+		ButterflyRoof_Split
+	
+ButterflyRoof_Split -->
+	split(z) { ~1: ButterflyRoof_Half(getScopeZ)
+			 | ~1: ButterflyRoof_Half(.-getScopeZ) }
+
+ButterflyRoof_Half(dir) -->
+	comp(f) { all: ShedRoof(findClosestEdgeNormalToVector(dir, false)) }
+
+SawtoothRoof -->
+	case Roof_Orientation == "along":
+		SawtoothRoof_Split
+	case Roof_Orientation == "across":
+		rotateScope(0,-90,0)
+		SawtoothRoof_Split
+	else:		# use Roof_Direction
+		alignScopeToAxes(world.xyz)			# x aligns to east (90 deg)
+		rotateScope(0,-Roof_Direction,0)	# align x to Roof_Direction+90 (ridge is along Roof_Direction+90)
+		SawtoothRoof_Split
+		
+SawtoothRoof_Split -->
+	split(z) { ~min(scope.sz/3, Roof_Ht/tan(minSawtoothIncline)): SawtoothRoof_Tooth(.-getScopeZ) }*	// min 3 teeth
+
+SawtoothRoof_Tooth(dir) -->
+	comp(f) { all: ShedRoof(findClosestEdgeNormalToVector(dir, false)) }
+
+GableRowRoof -->
+	case Roof_Orientation == "along":
+		GableRowRoof_Split
+	case Roof_Orientation == "across":
+		rotateScope(0,-90,0)
+		GableRowRoof_Split
+	else:		// use Roof_Direction
+		alignScopeToAxes(world.xyz)			// x aligns to east (90 deg)
+		rotateScope(0,-Roof_Direction,0)	// align x to Roof_Direction+90 (ridge is along Roof_Direction+90)
+		GableRowRoof_Split
+	
+GableRowRoof_Split -->
+	split(z) { ~min(scope.sz/2, 2*Roof_Ht/tan(minSawtoothIncline)): GableRowRoof_Part }*	// min 2 gables
+	
+GableRowRoof_Part -->
+	roofRidge(byHeight, Roof_Ht)
+	RoofMass(false)
+
+CrossGableRoof -->
+	case geometry.nEdges == 4 && !geometry.isConcave:
+		GableRoof(findClosestEdgeNormalToVector(getScopeX, true))
+		GableRoof(findClosestEdgeNormalToVector(getScopeZ, true))
+	else:
+		GableRoof
+
+# onion roof
+
+OnionRoof -->
+	[ alignScopeToGeometry(zUp,0,0) RoofPlane ]
+	alignScopeToAxes(y)
+	primitiveSphere(16, 16, 1.3*0.5*min(scope.sx,scope.sz))	# radius extends slightly past footprint
+	split(y) { '0.18: NIL
+			 | ~1: t(0, '-(0.18/(1-0.18-0.17)), 0)
+			 	   s('1, 0.6*Roof_Ht, '1)
+				   comp(f) { horizontal= NIL | all= RoofPlane }
+			 	   comp(f) { bottom= NIL | horizontal= set(Roof_Ht, 0.4*Roof_Ht) ConeRoof }
+			 | '0.17: NIL }
+
+ConeRoof -->
+	alignScopeToAxes(y)
+	primitiveCone
+	s('1, Roof_Ht, '1)
+	comp(f) { bottom: NIL | all= RoofPlane }
+
+# flat roof
+
+FlatRoof -->
+	case Roof_Ht > 0.1:
+		alignScopeToGeometry(zUp, 0, 0)
+		RoofPlane offset(-0.4,border) extrude(Roof_Ht) RoofMass(false)
+	else:
+		alignScopeToGeometry(zUp, 0, 0)
+		RoofPlane
+	
+# roof volume
+	
+RoofMassScale -->
+	s('1,Roof_Ht,'1)
+	RoofMass(false)
+	
+RoofMass(removeBottomAndTop) -->
+	case removeBottomAndTop:
+		comp(f){ horizontal: NIL | vertical: RoofOrFacade | all: RoofPlane }
+	else: # remove only the bottom face
+		comp(f){ bottom: NIL | vertical: RoofOrFacade | all: RoofPlane }
+
+RoofOrFacade -->
+	case Roof_Form == "shed"		: Facade
+	case Roof_Form == "pyramid"		: RoofPlane
+	case Roof_Form == "gable"		: Facade
+	case Roof_Form == "hip"			: RoofPlane
+	case Roof_Form == "half-hip"	: Facade
+	case Roof_Form == "gablet"		: Facade
+	case Roof_Form == "gambrel"		: Facade
+	case Roof_Form == "mansard"		: RoofPlane
+	case Roof_Form == "gambrel-flat": Facade
+	case Roof_Form == "mansard-flat": RoofPlane
+	case Roof_Form == "vault"		: Facade
+	case Roof_Form == "dome"		: RoofPlane
+	case Roof_Form == "saltbox"		: Facade
+	case Roof_Form == "butterfly"	: Facade
+	else							: RoofPlane
+
+
+###################################
+# Surface Texturing & Coloring
+#
+
+RoofPlane -->
+	case Representation == "realistic with facade textures":
+		color(OverwriteColor)
+		Roof_Textures.Generate
+	case Representation == "white":
+		color(1,1,1)
+	else:
+		color(RoofColor)
+
+BottomPlane -->
+	case Representation == "white":
+		color(1,1,1)
+	else:
+		color(OverwriteColor)
+
+Facade -->
+	case Representation == "realistic with facade textures":
+		color(OverwriteColor)
+		Facade_Textures.Generate
+	case Representation == "schematic facades":
+		case OverwriteColor == "#ffffff":
+			Facade_Schematic.Generate
+		else:
+			set(Facade_Schematic.SecondaryColor,OverwriteColor)
+			Facade_Schematic.Generate
+	case Representation == "white":
+		color(1,1,1)
+	else:
+		color(OverwriteColor)
+
+
+###################################
+# Reports
+#
+
+Reports_Lot -->
+	case Reporting=="All":
+		report("Footprint Area (m2)",geometry.area)
+		report("Nbr of Floors",rint(Extrude_Ht/Floor_Ht))
+		NIL
+	else:
+		NIL
+	
+# height	height of extruded part
+Reports_GFA(height) -->
+	case Reporting=="All":
+		report("Gross Floor Area (m2)",geometry.area*rint(height/Floor_Ht))
+		NIL
+	else:
+		NIL
+		
+	
